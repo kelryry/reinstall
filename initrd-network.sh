@@ -317,7 +317,10 @@ if [ -f /usr/share/debconf/confmodule ]; then
     # dhcpv4
     # 无需等待写入 dns，在 dhcpv6 等待
     db_progress INFO netcfg/dhcp_progress
-    udhcpc -i "$ethx" -f -q -n || true
+    # 纯 IPv6 网络跳过 DHCPv4，避免发送 IPv4 广播触发 ebtables 规则
+    if [ -n "$ipv4_addr" ] || [ -n "$ipv4_gateway" ]; then
+        udhcpc -i "$ethx" -f -q -n || true
+    fi
     db_progress STEP 1
 
     # slaac + dhcpv6
@@ -351,7 +354,10 @@ else
 
     case "$method" in
     udhcpc)
-        timeout $DHCP_TIMEOUT udhcpc -i "$ethx" -f -q -n || true
+        # 纯 IPv6 网络跳过 DHCPv4，避免发送 IPv4 广播触发 ebtables 规则
+        if [ -n "$ipv4_addr" ] || [ -n "$ipv4_gateway" ]; then
+            timeout $DHCP_TIMEOUT udhcpc -i "$ethx" -f -q -n || true
+        fi
         timeout $DHCP_TIMEOUT udhcpc6 -i "$ethx" -f -q -n || true
         sleep $DNS_FILE_TIMEOUT # 好像不用等待写入 dns，但是以防万一
         ;;
