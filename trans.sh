@@ -3835,6 +3835,19 @@ modify_os_on_disk() {
                 if etc_dir=$({ ls -d /os/etc/ || ls -d /os/*/etc/; } 2>/dev/null); then
                     os_dir=$(dirname $etc_dir)
                     clear_machine_id $os_dir
+                    # 禁止 systemd 根据 machine-id 派生 MAC 地址
+                    # 部分虚拟化平台网卡驱动不报告永久 MAC，systemd 会自行派生
+                    # ebtables 绑定 MAC 的商家会因此导致 DD 后失联
+                    mkdir -p $os_dir/etc/systemd/network
+                    cat >$os_dir/etc/systemd/network/99-default.link <<LINK
+[Match]
+OriginalName=*
+
+[Link]
+NamePolicy=keep kernel database onboard slot path
+AlternativeNamesPolicy=database onboard slot path
+MACAddressPolicy=none
+LINK
                     umount /os
                     break
                 fi

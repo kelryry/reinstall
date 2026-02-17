@@ -94,7 +94,7 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--rdp-port   PORT]
                        [--add-driver INF_OR_DIR]
 
-Manual: https://github.com/bin456789/reinstall
+Manual: https://github.com/kelryry/reinstall
 
 EOF
     exit 1
@@ -2563,40 +2563,6 @@ is_found_ipv6_netconf() {
 }
 
 # TODO: 单网卡多IP
-get_dhcp_client_id() {
-    eth=$1
-    # ISC dhclient
-    if [ -f /var/lib/dhcp/dhclient.leases ]; then
-        awk -v eth="$eth" '
-            $1 == "interface" {
-                gsub(/[";]/, "", $2)
-                current_iface = $2
-            }
-            $1 == "option" && $2 == "dhcp-client-identifier" && current_iface == eth {
-                gsub(";", "", $3)
-                last_id = $3
-            }
-            END {
-                if (last_id) {
-                    gsub(":", "", last_id)
-                    print last_id
-                }
-            }
-        ' /var/lib/dhcp/dhclient.leases
-        return
-    fi
-    # systemd-networkd
-    if [ -d /run/systemd/netif/leases ]; then
-        # shellcheck disable=SC2086
-        if_index=$(ip link show dev "$eth" | head -1 | cut -d: -f1)
-        if [ -f "/run/systemd/netif/leases/$if_index" ]; then
-             client_id=$(grep '^CLIENTID=' "/run/systemd/netif/leases/$if_index" | cut -d= -f2)
-             echo "$client_id" | sed 's/://g'
-             return
-         fi
-    fi
-}
-
 collect_netconf() {
     if is_in_windows; then
         convert_net_str_to_array() {
@@ -2761,14 +2727,6 @@ collect_netconf() {
     fi
 
     info "Network Info"
-    
-    # 获取 DHCP Client ID
-    # shellcheck disable=SC2154
-    eth=$ipv4_ethx
-    [ -z "$eth" ] && eth=$ipv6_ethx
-    dhcp_client_id=$(get_dhcp_client_id "$eth")
-    echo "DHCP Client ID: $dhcp_client_id"
-    
     echo "IPv4 MAC: $ipv4_mac"
     echo "IPv4 Address: $ipv4_addr"
     echo "IPv4 Gateway: $ipv4_gateway"
@@ -3648,15 +3606,14 @@ get_ip_conf_cmd() {
     is_in_china && is_in_china=true || is_in_china=false
 
     sh=/initrd-network.sh
-    # shellcheck disable=SC2154
     if is_found_ipv4_netconf && is_found_ipv6_netconf && [ "$ipv4_mac" = "$ipv6_mac" ]; then
-        echo "'$sh' '$ipv4_mac' '$ipv4_addr' '$ipv4_gateway' '$ipv6_addr' '$ipv6_gateway' '$is_in_china' '$dhcp_client_id'"
+        echo "'$sh' '$ipv4_mac' '$ipv4_addr' '$ipv4_gateway' '$ipv6_addr' '$ipv6_gateway' '$is_in_china'"
     else
         if is_found_ipv4_netconf; then
-            echo "'$sh' '$ipv4_mac' '$ipv4_addr' '$ipv4_gateway' '' '' '$is_in_china' '$dhcp_client_id'"
+            echo "'$sh' '$ipv4_mac' '$ipv4_addr' '$ipv4_gateway' '' '' '$is_in_china'"
         fi
         if is_found_ipv6_netconf; then
-            echo "'$sh' '$ipv6_mac' '' '' '$ipv6_addr' '$ipv6_gateway' '$is_in_china' '$dhcp_client_id'"
+            echo "'$sh' '$ipv6_mac' '' '' '$ipv6_addr' '$ipv6_gateway' '$is_in_china'"
         fi
     fi
 }
