@@ -3825,8 +3825,22 @@ modify_os_on_disk() {
 
     update_part
 
-    # dd linux 的时候不用修改硬盘内容（nocloud 模式除外）
+    # dd linux 的时候只需要清除 machine-id（nocloud 模式除外）
+    # 防止 systemd 根据镜像原有的 machine-id 派生出不同的 MAC/IPv6 地址
+    # 在使用 ebtables 绑定 MAC 地址的 VPS 商家会导致 DD 后失联
     if [ "$distro" = "dd" ] && [ "$only_process" != "nocloud" ] && ! lsblk -f /dev/$xda | grep ntfs; then
+        mkdir -p /os
+        for part in $(lsblk /dev/$xda*[0-9] --sort SIZE -no NAME | tac); do
+            if mount /dev/$part /os 2>/dev/null; then
+                if etc_dir=$({ ls -d /os/etc/ || ls -d /os/*/etc/; } 2>/dev/null); then
+                    os_dir=$(dirname $etc_dir)
+                    clear_machine_id $os_dir
+                    umount /os
+                    break
+                fi
+                umount /os
+            fi
+        done
         return
     fi
 
