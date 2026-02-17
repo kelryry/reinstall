@@ -3819,6 +3819,84 @@ EOF
     rm -rf "$os_dir/var/lib/cloud/instances"
 }
 
+configure_dd_network() {
+    os_dir=$1
+    conf_file=$os_dir/etc/network/interfaces
+
+    # 从 netconf 读取网络信息
+    netconf_dir=$(ls -d /dev/netconf/*/ 2>/dev/null | head -1)
+    [ -z "$netconf_dir" ] && return
+
+    dd_ethx=$(cat $netconf_dir/ethx)
+    dd_mac=$(cat $netconf_dir/mac_addr)
+    dd_ipv4_addr=$(cat $netconf_dir/ipv4_addr)
+    dd_ipv4_gw=$(cat $netconf_dir/ipv4_gateway)
+    dd_ipv6_addr=$(cat $netconf_dir/ipv6_addr)
+    dd_ipv6_gw=$(cat $netconf_dir/ipv6_gateway)
+    dd_ipv6_extra=$(cat $netconf_dir/ipv6_extra_addrs 2>/dev/null)
+    dd_ipv4_internet=$(cat $netconf_dir/ipv4_has_internet)
+    dd_ipv6_internet=$(cat $netconf_dir/ipv6_has_internet)
+
+    # 至少有一个协议能上网才重写
+    [ "$dd_ipv4_internet" != "1" ] && [ "$dd_ipv6_internet" != "1" ] && return
+
+    cat >$conf_file <<EOF
+auto lo
+iface lo inet loopback
+
+# mac $dd_mac
+auto $dd_ethx
+EOF
+
+    # ipv4
+    if [ "$dd_ipv4_internet" = "1" ] && [ -n "$dd_ipv4_addr" ] && [ -n "$dd_ipv4_gw" ]; then
+        cat >>$conf_file <<EOF
+iface $dd_ethx inet static
+    address $dd_ipv4_addr
+    gateway $dd_ipv4_gw
+EOF
+    fi
+
+    # ipv6
+    if [ "$dd_ipv6_internet" = "1" ] && [ -n "$dd_ipv6_addr" ] && [ -n "$dd_ipv6_gw" ]; then
+        cat >>$conf_file <<EOF
+iface $dd_ethx inet6 static
+    accept_ra 0
+    address $dd_ipv6_addr
+    gateway $dd_ipv6_gw
+EOF
+        # 额外的 IPv6 地址
+        OLD_IFS="$IFS"
+        IFS=','
+        for addr in $dd_ipv6_extra; do
+            echo "    up ip -6 addr add $addr dev $dd_ethx" >>$conf_file
+        done
+        IFS="$OLD_IFS"
+    fi
+
+    # dns
+    dd_is_china=$(cat $netconf_dir/is_in_china 2>/dev/null)
+    dns=""
+    if [ "$dd_ipv4_internet" = "1" ]; then
+        if [ "$dd_is_china" = "1" ]; then
+            dns="223.5.5.5 119.29.29.29"
+        else
+            dns="1.1.1.1 8.8.8.8"
+        fi
+    fi
+    if [ "$dd_ipv6_internet" = "1" ]; then
+        if [ "$dd_is_china" = "1" ]; then
+            dns="$dns 2400:3200::1 2402:4e00::"
+        else
+            dns="$dns 2606:4700:4700::1111 2001:4860:4860::8888"
+        fi
+    fi
+    echo "    dns-nameservers $dns" >>$conf_file
+
+    echo "DD network config written to $conf_file:"
+    cat $conf_file
+}
+
 modify_os_on_disk() {
     only_process=$1
     info "Modify disk if is $only_process"
@@ -3835,9 +3913,8 @@ modify_os_on_disk() {
                 if etc_dir=$({ ls -d /os/etc/ || ls -d /os/*/etc/; } 2>/dev/null); then
                     os_dir=$(dirname $etc_dir)
                     clear_machine_id $os_dir
+
                     # 禁止 systemd 根据 machine-id 派生 MAC 地址
-                    # 部分虚拟化平台网卡驱动不报告永久 MAC，systemd 会自行派生
-                    # ebtables 绑定 MAC 的商家会因此导致 DD 后失联
                     mkdir -p $os_dir/etc/systemd/network
                     cat >$os_dir/etc/systemd/network/99-default.link <<LINK
 [Match]
@@ -3848,6 +3925,13 @@ NamePolicy=keep kernel database onboard slot path
 AlternativeNamesPolicy=database onboard slot path
 MACAddressPolicy=none
 LINK
+
+                    # 为 DD 镜像重写网络配置
+                    # DD 镜像自带的是源机器的网络配置，需要替换为当前 VPS 的
+                    if [ -d /dev/netconf ] && [ -f $os_dir/etc/network/interfaces ]; then
+                        configure_dd_network $os_dir
+                    fi
+
                     umount /os
                     break
                 fi
