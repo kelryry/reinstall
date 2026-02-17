@@ -27,7 +27,7 @@ If this helped you, you can buy me a milk tea.
 
 ### Feedback
 
-[![GitHub Issues](https://img.shields.io/badge/GitHub-%23121011.svg?style=for-the-badge&logo=github&logoColor=white)](https://github.com/bin456789/reinstall/issues)
+[![GitHub Issues](https://img.shields.io/badge/GitHub-%23121011.svg?style=for-the-badge&logo=github&logoColor=white)](https://github.com/kelryry/reinstall/issues)
 [![Telegram Group](https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/reinstall_os)
 
 ## Quick Start
@@ -88,13 +88,13 @@ The system requirements for the target system are as follows:
 For server outside China:
 
 ```bash
-curl -O https://raw.githubusercontent.com/bin456789/reinstall/main/reinstall.sh || wget -O ${_##*/} $_
+curl -O https://raw.githubusercontent.com/kelryry/reinstall/main/reinstall.sh || wget -O ${_##*/} $_
 ```
 
 For server inside China:
 
 ```bash
-curl -O https://cnb.cool/bin456789/reinstall/-/git/raw/main/reinstall.sh || wget -O ${_##*/} $_
+curl -O https://cnb.cool/kelryry/reinstall/-/git/raw/main/reinstall.sh || wget -O ${_##*/} $_
 ```
 
 ## Download (Current system is <img width="20" height="20" src="https://blogs.windows.com/wp-content/uploads/prod/2022/09/cropped-Windows11IconTransparent512-32x32.png" /> Windows)
@@ -110,7 +110,7 @@ Due to lack of support for TLS 1.2, SHA-256, or outdated root certificates, Wind
 
 Use Internet Explorer (enable TLS 1.2 in IE's advanced settings first) to download, or use Remote Desktop to save the following two files into the same directory:
 
-- <https://raw.githubusercontent.com/bin456789/reinstall/main/reinstall.bat>
+- <https://raw.githubusercontent.com/kelryry/reinstall/main/reinstall.bat>
 
 - <https://www.cygwin.com/setup-x86.exe>
 
@@ -121,13 +121,13 @@ To use, run the downloaded `reinstall.bat`.
 For server outside China:
 
 ```batch
-certutil -urlcache -f -split https://raw.githubusercontent.com/bin456789/reinstall/main/reinstall.bat
+certutil -urlcache -f -split https://raw.githubusercontent.com/kelryry/reinstall/main/reinstall.bat
 ```
 
 For server inside China:
 
 ```batch
-certutil -urlcache -f -split https://cnb.cool/bin456789/reinstall/-/git/raw/main/reinstall.bat
+certutil -urlcache -f -split https://cnb.cool/kelryry/reinstall/-/git/raw/main/reinstall.bat
 ```
 
 ## Usage
@@ -569,11 +569,11 @@ According to the Law of Bug Conservation, fixing old bugs often introduces new o
 
 If a new bug occurs, try using an older version to see if it works.
 
-Go to <https://github.com/bin456789/reinstall/commits/main> and find the old version’s `commit_id` on the right side.
+Go to <https://github.com/kelryry/reinstall/commits/main> and find the old version’s `commit_id` on the right side.
 
 ```bash
 commit_id=xxxxxxx
-curl -O https://raw.githubusercontent.com/bin456789/reinstall/$commit_id/reinstall.sh || wget -O ${_##*/} $_
+curl -O https://raw.githubusercontent.com/kelryry/reinstall/$commit_id/reinstall.sh || wget -O ${_##*/} $_
 sed -i "/^confhome.*main$/s/main/$commit_id/" reinstall.sh
 bash reinstall.sh ...
 ```
