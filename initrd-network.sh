@@ -11,6 +11,7 @@ ipv4_gateway=$3
 ipv6_addr=$4
 ipv6_gateway=$5
 is_in_china=$6
+ipv6_extra_addrs=$7
 
 DHCP_TIMEOUT=15
 DNS_FILE_TIMEOUT=5
@@ -159,6 +160,16 @@ add_missing_ipv6_config() {
     if [ -n "$ipv6_addr" ] && [ -n "$ipv6_gateway" ]; then
         if ! is_have_ipv6_addr; then
             ip -6 addr add "$ipv6_addr" dev "$ethx"
+        fi
+
+        # 添加额外的 IPv6 地址（逗号分隔）
+        if [ -n "$ipv6_extra_addrs" ]; then
+            OLD_IFS="$IFS"
+            IFS=','
+            for addr in $ipv6_extra_addrs; do
+                ip -6 addr add "$addr" dev "$ethx" 2>/dev/null || true
+            done
+            IFS="$OLD_IFS"
         fi
 
         if ! is_have_ipv6_gateway; then
@@ -506,5 +517,6 @@ echo "$ipv4_addr" >"$netconf/ipv4_addr"
 echo "$ipv4_gateway" >"$netconf/ipv4_gateway"
 echo "$ipv6_addr" >"$netconf/ipv6_addr"
 echo "$ipv6_gateway" >"$netconf/ipv6_gateway"
+echo "$ipv6_extra_addrs" >"$netconf/ipv6_extra_addrs"
 $ipv4_has_internet && echo 1 >"$netconf/ipv4_has_internet" || echo 0 >"$netconf/ipv4_has_internet"
 $ipv6_has_internet && echo 1 >"$netconf/ipv6_has_internet" || echo 0 >"$netconf/ipv6_has_internet"
