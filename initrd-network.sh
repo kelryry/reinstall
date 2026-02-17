@@ -11,6 +11,7 @@ ipv4_gateway=$3
 ipv6_addr=$4
 ipv6_gateway=$5
 is_in_china=$6
+dhcp_client_id=$7
 
 DHCP_TIMEOUT=15
 DNS_FILE_TIMEOUT=5
@@ -317,10 +318,8 @@ if [ -f /usr/share/debconf/confmodule ]; then
     # dhcpv4
     # 无需等待写入 dns，在 dhcpv6 等待
     db_progress INFO netcfg/dhcp_progress
-    # 纯 IPv6 网络跳过 DHCPv4，避免发送 IPv4 广播触发 ebtables 规则
-    if [ -n "$ipv4_addr" ] || [ -n "$ipv4_gateway" ]; then
-        udhcpc -i "$ethx" -f -q -n || true
-    fi
+    # shellcheck disable=SC2086
+    udhcpc -i "$ethx" -f -q -n ${dhcp_client_id:+-x 0x3d:$dhcp_client_id} || true
     db_progress STEP 1
 
     # slaac + dhcpv6
@@ -354,10 +353,8 @@ else
 
     case "$method" in
     udhcpc)
-        # 纯 IPv6 网络跳过 DHCPv4，避免发送 IPv4 广播触发 ebtables 规则
-        if [ -n "$ipv4_addr" ] || [ -n "$ipv4_gateway" ]; then
-            timeout $DHCP_TIMEOUT udhcpc -i "$ethx" -f -q -n || true
-        fi
+        # shellcheck disable=SC2086
+        timeout $DHCP_TIMEOUT udhcpc -i "$ethx" -f -q -n ${dhcp_client_id:+-x 0x3d:$dhcp_client_id} || true
         timeout $DHCP_TIMEOUT udhcpc6 -i "$ethx" -f -q -n || true
         sleep $DNS_FILE_TIMEOUT # 好像不用等待写入 dns，但是以防万一
         ;;
