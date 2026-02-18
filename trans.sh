@@ -1124,10 +1124,11 @@ EOF
             # 额外的 IPv6 地址（子网不含网关的地址）
             get_netconf_to ipv6_extra_addrs
             if [ -n "$ipv6_extra_addrs" ]; then
-                IFS=',' read -ra _extra_v6 <<<"$ipv6_extra_addrs"
-                for _addr in "${_extra_v6[@]}"; do
-                    echo "    post-up ip -6 addr add $_addr dev $ethx || true" >>$conf_file
+                _old_ifs=$IFS; IFS=','
+                for _addr in $ipv6_extra_addrs; do
+                    echo "    post-up ip -6 addr add $_addr dev $ethx" >>$conf_file
                 done
+                IFS=$_old_ifs
             fi
         fi
 
