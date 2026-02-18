@@ -2554,6 +2554,38 @@ find_main_disk() {
     fi
 }
 
+# 判断 IP 地址/前缀 是否包含网关
+# 用法: ip_addr_contains_gw "2a0f:7803:f6cc::5613:e7a7/44" "2a0f:7803:f6c0::1"
+ip_addr_contains_gw() {
+    local addr_with_prefix=$1
+    local gw=$2
+
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c "
+import ipaddress, sys
+try:
+    net = ipaddress.ip_network('$addr_with_prefix', strict=False)
+    gw = ipaddress.ip_address('$gw')
+    sys.exit(0 if gw in net else 1)
+except:
+    sys.exit(1)
+"
+    elif command -v python >/dev/null 2>&1; then
+        python -c "
+import ipaddress, sys
+try:
+    net = ipaddress.ip_network(u'$addr_with_prefix', strict=False)
+    gw = ipaddress.ip_address(u'$gw')
+    sys.exit(0 if gw in net else 1)
+except:
+    sys.exit(1)
+"
+    else
+        # 没有 python，无法判断，保持原有行为
+        return 0
+    fi
+}
+
 is_found_ipv4_netconf() {
     [ -n "$ipv4_mac" ] && [ -n "$ipv4_addr" ] && [ -n "$ipv4_gateway" ]
 }
@@ -2717,8 +2749,24 @@ collect_netconf() {
                 eval ipv${v}_ethx="$ethx" # can_use_cloud_kernel 要用
                 eval ipv${v}_mac="$(ip link show dev $ethx | grep link/ether | head -1 | awk '{print $2}')"
                 eval ipv${v}_gateway="$gateway"
-                eval ipv${v}_addr="$(ip -$v -o addr show scope global dev $ethx | grep -v temporary | head -1 | awk '{print $4}')"
-                eval ipv${v}_extra_addrs="$(ip -$v -o addr show scope global dev $ethx | grep -v temporary | sed 1d | awk '{print $4}' | tr '\n' ',' | sed 's/,$//')"
+
+                # 获取所有全局地址
+                all_addrs=$(ip -$v -o addr show scope global dev $ethx | grep -v temporary | awk '{print $4}')
+                primary_addr=$(echo "$all_addrs" | head -1)
+
+                # IPv6: 选择子网包含网关的地址作为主地址
+                if [ "$v" = 6 ] && [ -n "$primary_addr" ] && [ -n "$gateway" ]; then
+                    for addr in $all_addrs; do
+                        if ip_addr_contains_gw "$addr" "$gateway"; then
+                            primary_addr=$addr
+                            break
+                        fi
+                    done
+                fi
+
+                eval ipv${v}_addr="$primary_addr"
+                # extra_addrs: 除主地址外的所有地址
+                eval ipv${v}_extra_addrs="$(echo "$all_addrs" | grep -v "^${primary_addr}$" | tr '\n' ',' | sed 's/,$//')"
             fi
         done
     fi

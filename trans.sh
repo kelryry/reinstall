@@ -1121,6 +1121,14 @@ EOF
     post-up ip route add default via $ipv6_gateway dev $ethx
 EOF
             fi
+            # 额外的 IPv6 地址（子网不含网关的地址）
+            get_netconf_to ipv6_extra_addrs
+            if [ -n "$ipv6_extra_addrs" ]; then
+                IFS=',' read -ra _extra_v6 <<<"$ipv6_extra_addrs"
+                for _addr in "${_extra_v6[@]}"; do
+                    echo "    post-up ip -6 addr add $_addr dev $ethx || true" >>$conf_file
+                done
+            fi
         fi
 
         # dns
@@ -3819,6 +3827,104 @@ EOF
     rm -rf "$os_dir/var/lib/cloud/instances"
 }
 
+# 将 IPv6 地址展开为 32 位十六进制字符串（无分隔符）
+# 用法: expand_ipv6 "2a0f:7803:f6cc::5613:e7a7"
+# 输出: 2a0f7803f6cc0000000000005613e7a7
+expand_ipv6() {
+    # 处理 :: 展开
+    local addr=$1
+    local left right pad
+
+    if echo "$addr" | grep -q '::'; then
+        left=${addr%%::*}
+        right=${addr#*::}
+        # 计算已有的组数
+        local left_groups=0 right_groups=0
+        if [ -n "$left" ]; then
+            left_groups=$(echo "$left" | awk -F: '{print NF}')
+        fi
+        if [ -n "$right" ]; then
+            right_groups=$(echo "$right" | awk -F: '{print NF}')
+        fi
+        local pad_groups=$((8 - left_groups - right_groups))
+        pad=""
+        local i=0
+        while [ $i -lt $pad_groups ]; do
+            pad="${pad}0000"
+            i=$((i + 1))
+        done
+    else
+        left=$addr
+        right=""
+        pad=""
+    fi
+
+    # 展开每组为4位十六进制
+    local result=""
+    local IFS_OLD="$IFS"
+    IFS=:
+    for group in $left; do
+        result="${result}$(printf '%04x' "0x${group}")"
+    done
+    IFS="$IFS_OLD"
+    result="${result}${pad}"
+    IFS_OLD="$IFS"
+    IFS=:
+    for group in $right; do
+        result="${result}$(printf '%04x' "0x${group}")"
+    done
+    IFS="$IFS_OLD"
+
+    echo "$result"
+}
+
+# 判断 IPv6 地址/前缀 是否包含网关
+# 用法: ipv6_addr_contains_gw "2a0f:7803:f6cc::5613:e7a7/44" "2a0f:7803:f6c0::1"
+ipv6_addr_contains_gw() {
+    local addr_with_prefix=$1
+    local gw=$2
+
+    local addr=${addr_with_prefix%/*}
+    local prefix_len=${addr_with_prefix#*/}
+
+    # 如果没有前缀长度，无法判断
+    [ "$prefix_len" = "$addr" ] && return 0
+
+    local addr_hex gw_hex
+    addr_hex=$(expand_ipv6 "$addr")
+    gw_hex=$(expand_ipv6 "$gw")
+
+    # 按前缀长度截取（每个十六进制字符=4位）
+    # 取 prefix_len/4 个字符比较，剩余位用掩码处理
+    local full_chars=$((prefix_len / 4))
+    local remain_bits=$((prefix_len % 4))
+
+    local addr_prefix gw_prefix
+    addr_prefix=$(echo "$addr_hex" | cut -c1-$full_chars)
+    gw_prefix=$(echo "$gw_hex" | cut -c1-$full_chars)
+
+    if [ "$addr_prefix" != "$gw_prefix" ]; then
+        return 1
+    fi
+
+    # 处理剩余位
+    if [ $remain_bits -gt 0 ]; then
+        local next_pos=$((full_chars + 1))
+        local addr_nibble gw_nibble
+        addr_nibble=$(echo "$addr_hex" | cut -c$next_pos-$next_pos)
+        gw_nibble=$(echo "$gw_hex" | cut -c$next_pos-$next_pos)
+        # 右移掉不需要比较的位
+        local shift=$((4 - remain_bits))
+        local addr_masked=$((0x$addr_nibble >> shift))
+        local gw_masked=$((0x$gw_nibble >> shift))
+        if [ $addr_masked -ne $gw_masked ]; then
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
 configure_dd_network() {
     os_dir=$1
     conf_file=$os_dir/etc/network/interfaces
@@ -3836,11 +3942,42 @@ configure_dd_network() {
     dd_ipv6_extra=$(cat $netconf_dir/ipv6_extra_addrs 2>/dev/null)
     dd_ipv4_internet=$(cat $netconf_dir/ipv4_has_internet)
     dd_ipv6_internet=$(cat $netconf_dir/ipv6_has_internet)
+    dd_disable_accept_ra=$(cat $netconf_dir/should_disable_accept_ra 2>/dev/null)
 
     # 至少有一个协议能上网才重写
     [ "$dd_ipv4_internet" != "1" ] && [ "$dd_ipv6_internet" != "1" ] && return
 
+    # 选择正确的 IPv6 主地址：网关所在子网的地址应作为主地址
+    # 否则 gateway 指令会因为网关不在主地址子网内而失败
+    dd_ipv6_primary=$dd_ipv6_addr
+    dd_ipv6_extra_list=$dd_ipv6_extra
+    if [ "$dd_ipv6_internet" = "1" ] && [ -n "$dd_ipv6_gw" ] && [ -n "$dd_ipv6_extra" ]; then
+        # 检查主地址的子网是否包含网关
+        if ! ipv6_addr_contains_gw "$dd_ipv6_addr" "$dd_ipv6_gw"; then
+            # 在 extra 地址中寻找包含网关的地址
+            OLD_IFS="$IFS"
+            IFS=','
+            new_extra=""
+            for addr in $dd_ipv6_extra; do
+                if [ "$addr" = "$dd_ipv6_primary" ]; then
+                    continue
+                fi
+                if ipv6_addr_contains_gw "$addr" "$dd_ipv6_gw" && [ "$dd_ipv6_primary" = "$dd_ipv6_addr" ]; then
+                    # 找到包含网关的地址，交换
+                    new_extra="${new_extra:+$new_extra,}$dd_ipv6_addr"
+                    dd_ipv6_primary=$addr
+                else
+                    new_extra="${new_extra:+$new_extra,}$addr"
+                fi
+            done
+            IFS="$OLD_IFS"
+            dd_ipv6_extra_list=$new_extra
+        fi
+    fi
+
     cat >$conf_file <<EOF
+source /etc/network/interfaces.d/*
+
 auto lo
 iface lo inet loopback
 
@@ -3858,40 +3995,45 @@ EOF
     fi
 
     # ipv6
-    if [ "$dd_ipv6_internet" = "1" ] && [ -n "$dd_ipv6_addr" ] && [ -n "$dd_ipv6_gw" ]; then
+    if [ "$dd_ipv6_internet" = "1" ] && [ -n "$dd_ipv6_primary" ] && [ -n "$dd_ipv6_gw" ]; then
         cat >>$conf_file <<EOF
 iface $dd_ethx inet6 static
-    accept_ra 0
-    address $dd_ipv6_addr
+    address $dd_ipv6_primary
     gateway $dd_ipv6_gw
 EOF
+        # 禁用 RA
+        if [ "$dd_disable_accept_ra" = "1" ]; then
+            echo "    accept_ra 0" >>$conf_file
+        fi
         # 额外的 IPv6 地址
         OLD_IFS="$IFS"
         IFS=','
-        for addr in $dd_ipv6_extra; do
-            echo "    up ip -6 addr add $addr dev $dd_ethx" >>$conf_file
+        for addr in $dd_ipv6_extra_list; do
+            [ -n "$addr" ] && echo "    up ip -6 addr add $addr dev $dd_ethx" >>$conf_file
         done
         IFS="$OLD_IFS"
     fi
 
     # dns
     dd_is_china=$(cat $netconf_dir/is_in_china 2>/dev/null)
-    dns=""
     if [ "$dd_ipv4_internet" = "1" ]; then
         if [ "$dd_is_china" = "1" ]; then
-            dns="223.5.5.5 119.29.29.29"
+            echo "    dns-nameserver 223.5.5.5" >>$conf_file
+            echo "    dns-nameserver 119.29.29.29" >>$conf_file
         else
-            dns="1.1.1.1 8.8.8.8"
+            echo "    dns-nameserver 1.1.1.1" >>$conf_file
+            echo "    dns-nameserver 8.8.8.8" >>$conf_file
         fi
     fi
     if [ "$dd_ipv6_internet" = "1" ]; then
         if [ "$dd_is_china" = "1" ]; then
-            dns="$dns 2400:3200::1 2402:4e00::"
+            echo "    dns-nameserver 2400:3200::1" >>$conf_file
+            echo "    dns-nameserver 2402:4e00::" >>$conf_file
         else
-            dns="$dns 2606:4700:4700::1111 2001:4860:4860::8888"
+            echo "    dns-nameserver 2606:4700:4700::1111" >>$conf_file
+            echo "    dns-nameserver 2001:4860:4860::8888" >>$conf_file
         fi
     fi
-    echo "    dns-nameservers $dns" >>$conf_file
 
     echo "DD network config written to $conf_file:"
     cat $conf_file
@@ -3915,14 +4057,16 @@ modify_os_on_disk() {
                     clear_machine_id $os_dir
 
                     # 禁止 systemd 根据 machine-id 派生 MAC 地址
+                    # NamePolicy=keep 保持内核默认网卡名(eth0)，与 interfaces 配置一致
+                    # fix-eth-name.sh 首次启动时会根据 MAC 地址修正为正确的网卡名
                     mkdir -p $os_dir/etc/systemd/network
                     cat >$os_dir/etc/systemd/network/99-default.link <<LINK
 [Match]
 OriginalName=*
 
 [Link]
-NamePolicy=keep kernel database onboard slot path
-AlternativeNamesPolicy=database onboard slot path
+NamePolicy=keep
+AlternativeNamesPolicy=
 MACAddressPolicy=none
 LINK
 
