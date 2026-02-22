@@ -175,9 +175,11 @@ add_missing_ipv6_config() {
 
         # 添加额外的 IPv6 地址（逗号分隔）
         if [ -n "$ipv6_extra_addrs" ]; then
-            (IFS=','; for addr in $ipv6_extra_addrs; do
-                ip -6 addr add "$addr" dev "$ethx" 2>/dev/null || true
-            done)
+            printf '%s\n' "$ipv6_extra_addrs" | tr ',' '\n' | while IFS= read -r addr; do
+                if [ -n "$addr" ]; then
+                    ip -6 addr add "$addr" dev "$ethx" 2>/dev/null || true
+                fi
+            done
         fi
     fi
 }
