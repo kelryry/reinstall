@@ -3852,8 +3852,8 @@ modify_os_on_disk() {
         mkdir -p /os
         for part in $(lsblk /dev/$xda*[0-9] --sort SIZE -no NAME | tac); do
             if mount /dev/$part /os 2>/dev/null; then
-                if etc_dir=$({ ls -d /os/etc/ || ls -d /os/*/etc/; } 2>/dev/null); then
-                    os_dir=$(dirname $etc_dir)
+                if etc_dir=$({ ls -d /os/etc/ || ls -d /os/*/etc/; } 2>/dev/null | head -n1); then
+                    os_dir=$(dirname "$etc_dir")
                     clear_machine_id $os_dir
 
                     # 创建 99-default.link 禁止 systemd 派生 MAC 地址
