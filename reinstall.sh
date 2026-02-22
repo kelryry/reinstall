@@ -2562,6 +2562,97 @@ is_found_ipv6_netconf() {
     [ -n "$ipv6_mac" ] && [ -n "$ipv6_addr" ] && [ -n "$ipv6_gateway" ]
 }
 
+# 将 IPv6 地址展开为 32 位十六进制字符串（无分隔符）
+# 用法: expand_ipv6 "2a0f:7803:f6cc::5613:e7a7"
+# 输出: 2a0f7803f6cc0000000000005613e7a7
+expand_ipv6() {
+    local addr=$1
+    local left right pad
+
+    if echo "$addr" | grep -q '::'; then
+        left=${addr%%::*}
+        right=${addr#*::}
+        local left_groups=0 right_groups=0
+        if [ -n "$left" ]; then
+            left_groups=$(echo "$left" | awk -F: '{print NF}')
+        fi
+        if [ -n "$right" ]; then
+            right_groups=$(echo "$right" | awk -F: '{print NF}')
+        fi
+        local pad_groups=$((8 - left_groups - right_groups))
+        pad=""
+        local i=0
+        while [ $i -lt $pad_groups ]; do
+            pad="${pad}0000"
+            i=$((i + 1))
+        done
+    else
+        left=$addr
+        right=""
+        pad=""
+    fi
+
+    local result=""
+    local IFS_OLD="$IFS"
+    IFS=:
+    for group in $left; do
+        result="${result}$(printf '%04x' "0x${group}")"
+    done
+    IFS="$IFS_OLD"
+    result="${result}${pad}"
+    IFS_OLD="$IFS"
+    IFS=:
+    for group in $right; do
+        result="${result}$(printf '%04x' "0x${group}")"
+    done
+    IFS="$IFS_OLD"
+
+    echo "$result"
+}
+
+# 判断 IPv6 地址/前缀 是否包含网关
+# 用法: ip_addr_contains_gw "2a0f:7803:f6cc::5613:e7a7/44" "2a0f:7803:f6c0::1"
+ip_addr_contains_gw() {
+    local addr_with_prefix=$1
+    local gw=$2
+
+    local addr=${addr_with_prefix%/*}
+    local prefix_len=${addr_with_prefix#*/}
+
+    # 如果没有前缀长度，无法判断
+    [ "$prefix_len" = "$addr" ] && return 0
+
+    local addr_hex gw_hex
+    addr_hex=$(expand_ipv6 "$addr")
+    gw_hex=$(expand_ipv6 "$gw")
+
+    local full_chars=$((prefix_len / 4))
+    local remain_bits=$((prefix_len % 4))
+
+    local addr_prefix gw_prefix
+    addr_prefix=$(echo "$addr_hex" | cut -c1-$full_chars)
+    gw_prefix=$(echo "$gw_hex" | cut -c1-$full_chars)
+
+    if [ "$addr_prefix" != "$gw_prefix" ]; then
+        return 1
+    fi
+
+    if [ $remain_bits -gt 0 ]; then
+        local next_pos=$((full_chars + 1))
+        local addr_nibble gw_nibble
+        addr_nibble=$(echo "$addr_hex" | cut -c$next_pos-$next_pos)
+        gw_nibble=$(echo "$gw_hex" | cut -c$next_pos-$next_pos)
+        local shift=$((4 - remain_bits))
+        local addr_masked=$((0x$addr_nibble >> shift))
+        local gw_masked=$((0x$gw_nibble >> shift))
+        if [ $addr_masked -ne $gw_masked ]; then
+            return 1
+        fi
+    fi
+
+    return 0
+}
+
 # TODO: 单网卡多IP
 collect_netconf() {
     if is_in_windows; then
@@ -2717,7 +2808,24 @@ collect_netconf() {
                 eval ipv${v}_ethx="$ethx" # can_use_cloud_kernel 要用
                 eval ipv${v}_mac="$(ip link show dev $ethx | grep link/ether | head -1 | awk '{print $2}')"
                 eval ipv${v}_gateway="$gateway"
-                eval ipv${v}_addr="$(ip -$v -o addr show scope global dev $ethx | grep -v temporary | head -1 | awk '{print $4}')"
+
+                # 获取所有全局地址
+                all_addrs=$(ip -$v -o addr show scope global dev $ethx | grep -v temporary | awk '{print $4}')
+                primary_addr=$(echo "$all_addrs" | head -1)
+
+                # IPv6: 选择子网包含网关的地址作为主地址
+                if [ "$v" = 6 ] && [ -n "$primary_addr" ] && [ -n "$gateway" ]; then
+                    for addr in $all_addrs; do
+                        if ip_addr_contains_gw "$addr" "$gateway"; then
+                            primary_addr=$addr
+                            break
+                        fi
+                    done
+                fi
+
+                eval ipv${v}_addr="$primary_addr"
+                # extra_addrs: 除主地址外的所有地址
+                eval ipv${v}_extra_addrs="$(echo "$all_addrs" | grep -v "^${primary_addr}$" | tr '\n' ',' | sed 's/,$//')"
             fi
         done
     fi
