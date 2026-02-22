@@ -2629,9 +2629,11 @@ ip_addr_contains_gw() {
     local full_chars=$((prefix_len / 4))
     local remain_bits=$((prefix_len % 4))
 
-    local addr_prefix gw_prefix
-    addr_prefix=$(echo "$addr_hex" | cut -c1-$full_chars)
-    gw_prefix=$(echo "$gw_hex" | cut -c1-$full_chars)
+    local addr_prefix="" gw_prefix=""
+    if [ $full_chars -gt 0 ]; then
+        addr_prefix=$(echo "$addr_hex" | cut -c1-$full_chars)
+        gw_prefix=$(echo "$gw_hex" | cut -c1-$full_chars)
+    fi
 
     if [ "$addr_prefix" != "$gw_prefix" ]; then
         return 1
@@ -2825,7 +2827,7 @@ collect_netconf() {
 
                 eval ipv${v}_addr="$primary_addr"
                 # extra_addrs: 除主地址外的所有地址
-                eval ipv${v}_extra_addrs="$(echo "$all_addrs" | grep -v "^${primary_addr}$" | tr '\n' ',' | sed 's/,$//')"
+                eval ipv${v}_extra_addrs="$(echo "$all_addrs" | grep -Fxve "$primary_addr" | tr '\n' ',' | sed 's/,$//')"
             fi
         done
     fi
@@ -3715,13 +3717,13 @@ get_ip_conf_cmd() {
 
     sh=/initrd-network.sh
     if is_found_ipv4_netconf && is_found_ipv6_netconf && [ "$ipv4_mac" = "$ipv6_mac" ]; then
-        echo "'$sh' '$ipv4_mac' '$ipv4_addr' '$ipv4_gateway' '$ipv6_addr' '$ipv6_gateway' '$is_in_china'"
+        echo "'$sh' '$ipv4_mac' '$ipv4_addr' '$ipv4_gateway' '$ipv6_addr' '$ipv6_gateway' '$is_in_china' '$ipv6_extra_addrs'"
     else
         if is_found_ipv4_netconf; then
-            echo "'$sh' '$ipv4_mac' '$ipv4_addr' '$ipv4_gateway' '' '' '$is_in_china'"
+            echo "'$sh' '$ipv4_mac' '$ipv4_addr' '$ipv4_gateway' '' '' '$is_in_china' ''"
         fi
         if is_found_ipv6_netconf; then
-            echo "'$sh' '$ipv6_mac' '' '' '$ipv6_addr' '$ipv6_gateway' '$is_in_china'"
+            echo "'$sh' '$ipv6_mac' '' '' '$ipv6_addr' '$ipv6_gateway' '$is_in_china' '$ipv6_extra_addrs'"
         fi
     fi
 }
