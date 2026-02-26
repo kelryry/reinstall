@@ -3825,7 +3825,8 @@ modify_os_on_disk() {
 
     update_part
 
-    # DD linux 时清除 machine-id 并禁用 MAC 地址派生（nocloud 模式除外）
+    # DD linux 时，默认不修改硬盘内容（nocloud 模式除外）
+    # 使用 --reset-machine-id 参数可清除 machine-id 并禁用 MAC 地址派生
     #
     # 问题背景 / Background:
     # systemd 默认的 MACAddressPolicy=persistent 会根据 machine-id 和网卡名
@@ -3843,25 +3844,26 @@ modify_os_on_disk() {
     # because the MAC address changed. Even without MAC binding, a wrong
     # machine-id causes incorrect DHCPv6 DUID and IPv6 SLAAC addresses.
     #
-    # 修复 / Fix:
+    # 修复 / Fix (需要 --reset-machine-id 参数):
     # 1. 清除 machine-id（设为 uninitialized），让 systemd 首次启动时重新生成
     # 2. 创建 99-default.link 设置 MACAddressPolicy=none，禁止派生 MAC 地址
     # 1. Clear machine-id (set to "uninitialized") so systemd regenerates it on first boot
     # 2. Create 99-default.link with MACAddressPolicy=none to prevent MAC derivation
     if [ "$distro" = "dd" ] && [ "$only_process" != "nocloud" ] && ! lsblk -f /dev/$xda | grep ntfs; then
-        mkdir -p /os
-        for part in $(lsblk /dev/$xda*[0-9] --sort SIZE -no NAME | tac); do
-            if mount /dev/$part /os 2>/dev/null; then
-                if etc_dir=$({ ls -d /os/etc/ || ls -d /os/*/etc/; } 2>/dev/null | head -n1); then
-                    os_dir=$(dirname "$etc_dir")
-                    clear_machine_id $os_dir
+        if [ -n "$reset_machine_id" ]; then
+            mkdir -p /os
+            for part in $(lsblk /dev/$xda*[0-9] --sort SIZE -no NAME | tac); do
+                if mount /dev/$part /os 2>/dev/null; then
+                    if etc_dir=$({ ls -d /os/etc/ || ls -d /os/*/etc/; } 2>/dev/null | head -n1); then
+                        os_dir=$(dirname "$etc_dir")
+                        clear_machine_id $os_dir
 
-                    # 创建 99-default.link 禁止 systemd 派生 MAC 地址
-                    # MACAddressPolicy=none: 保持硬件原始 MAC，不做任何派生
-                    # Create 99-default.link to prevent systemd from deriving MAC addresses
-                    # MACAddressPolicy=none: keep the hardware MAC as-is, no derivation
-                    mkdir -p $os_dir/etc/systemd/network
-                    cat >$os_dir/etc/systemd/network/99-default.link <<LINK
+                        # 创建 99-default.link 禁止 systemd 派生 MAC 地址
+                        # MACAddressPolicy=none: 保持硬件原始 MAC，不做任何派生
+                        # Create 99-default.link to prevent systemd from deriving MAC addresses
+                        # MACAddressPolicy=none: keep the hardware MAC as-is, no derivation
+                        mkdir -p $os_dir/etc/systemd/network
+                        cat >$os_dir/etc/systemd/network/99-default.link <<LINK
 [Match]
 OriginalName=*
 
@@ -3869,12 +3871,13 @@ OriginalName=*
 MACAddressPolicy=none
 LINK
 
+                        umount /os
+                        break
+                    fi
                     umount /os
-                    break
                 fi
-                umount /os
-            fi
-        done
+            done
+        fi
         return
     fi
 

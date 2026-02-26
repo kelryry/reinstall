@@ -94,6 +94,9 @@ Usage: $reinstall_____ anolis      7|8|23
                        [--rdp-port   PORT]
                        [--add-driver INF_OR_DIR]
 
+                       For DD Only:
+                       [--reset-machine-id]
+
 Manual: https://github.com/bin456789/reinstall
 
 EOF
@@ -3954,6 +3957,7 @@ for o in ci installer debug minimal allow-ping force-cn help \
     allow-ping: \
     commit: \
     frpc-conf: frpc-config: frpc-toml: \
+    reset-machine-id \
     force-boot-mode: \
     force-old-windows-setup:; do
     [ -n "$long_opts" ] && long_opts+=,
@@ -4175,6 +4179,10 @@ EOF
     --force-old-windows-setup)
         force_old_windows_setup=$2
         shift 2
+        ;;
+    --reset-machine-id)
+        reset_machine_id=1
+        shift
         ;;
     --img)
         img=$2
